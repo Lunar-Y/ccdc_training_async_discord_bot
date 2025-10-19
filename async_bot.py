@@ -13,9 +13,9 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 class TeamSettings:
     def __init__(self):
-        self.max_team_size = 5
-        self.max_teams = 10
-        self.duration_minutes = 30
+        self.max_team_size = 0
+        self.max_teams = 0
+        self.duration_minutes = 0
         self.ip_base = "10.10.x.10"
     
     def get_ip(self, team_num: int) -> str:
@@ -46,11 +46,12 @@ class TeamManager:
     def update_max_teams(self, new_max: int):
         old_max = self.settings.max_teams
         self.settings.max_teams = new_max
-        # if new_max > old_max:
-        #     for team_num in range(old_max + 1, new_max + 1):
-        #         self.available_team_nums.add(team_num)
-        self.available_team_nums = set(range(1, self.settings.max_teams + 1))
+
+
         
+        if new_max > old_max:
+            for team_num in range(old_max + 1, new_max + 1):
+                self.available_team_nums.add(team_num)
 
 manager = TeamManager()
 
@@ -251,6 +252,63 @@ async def create_team(interaction: discord.Interaction):
     
     await interaction.followup.send(f"Team {team_num} created! Check your DMs for details.", ephemeral=True)
 
+class JoinRequestView(discord.ui.View):
+    def __init__(self, user_id: int, username: str, team_num: int):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.username = username
+        self.team_num = team_num
+    
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
+    async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != manager.teams[self.team_num].captain_id:
+            await interaction.response.send_message("Only the team captain can approve join requests.", ephemeral=True)
+            return
+        
+        team = manager.teams[self.team_num]
+        if len(team.members) >= manager.settings.max_team_size:
+            await interaction.response.send_message("That team is now full!", ephemeral=True)
+            return
+        
+        team.members[self.user_id] = self.username
+        manager.user_teams[self.user_id] = self.team_num
+        
+        timer_embed = await create_timer_embed(team)
+        dm_sent, channel_id, msg_id = await send_dm(self.user_id, embed=timer_embed)
+        
+        if not dm_sent:
+            await interaction.response.send_message("Couldn't send DM to user. They may have DMs disabled.", ephemeral=True)
+            del team.members[self.user_id]
+            del manager.user_teams[self.user_id]
+            return
+        
+        if channel_id and msg_id:
+            team.timer_message_ids[self.user_id] = (channel_id, msg_id)
+        
+        approved_embed = discord.Embed(
+            title=f"Approved to Join Team {self.team_num}!",
+            description="The team captain has approved your join request.",
+            color=discord.Color.green()
+        )
+        await send_dm(self.user_id, embed=approved_embed)
+        
+        await interaction.response.send_message(f"Approved {self.username} to join Team {self.team_num}!", ephemeral=True)
+    
+    @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
+    async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != manager.teams[self.team_num].captain_id:
+            await interaction.response.send_message("Only the team captain can deny join requests.", ephemeral=True)
+            return
+        
+        denied_embed = discord.Embed(
+            title=f"Join Request Denied for Team {self.team_num}",
+            description="The team captain has denied your join request.",
+            color=discord.Color.red()
+        )
+        await send_dm(self.user_id, embed=denied_embed)
+        
+        await interaction.response.send_message(f"Denied {self.username}'s join request.", ephemeral=True)
+
 class JoinTeamButtonView(discord.ui.View):
     def __init__(self, user_id: int, username: str):
         super().__init__(timeout=300)
@@ -277,29 +335,22 @@ class JoinTeamButtonView(discord.ui.View):
             await interaction.response.send_message("That team is now full!", ephemeral=True)
             return
         
-        team.members[self.user_id] = self.username
-        manager.user_teams[self.user_id] = team_num
+        request_view = JoinRequestView(self.user_id, self.username, team_num)
         
-        timer_embed = await create_timer_embed(team)
-        dm_sent, channel_id, msg_id = await send_dm(self.user_id, embed=timer_embed)
+        request_embed = discord.Embed(
+            title=f"Join Request for Team {team_num}",
+            description=f"{self.username} has requested to join your team.",
+            color=discord.Color.yellow()
+        )
+        request_embed.add_field(name="Requested User ID", value=str(self.user_id), inline=False)
         
-        if not dm_sent:
-            await interaction.response.send_message("I couldn't DM you! Please enable DMs and try again.", ephemeral=True)
-            del team.members[self.user_id]
-            del manager.user_teams[self.user_id]
+        captain_dm_sent, _, _ = await send_dm(team.captain_id, embed=request_embed, view=request_view)
+        
+        if not captain_dm_sent:
+            await interaction.response.send_message("Couldn't send join request to captain. Captain may have DMs disabled.", ephemeral=True)
             return
         
-        if channel_id and msg_id:
-            team.timer_message_ids[self.user_id] = (channel_id, msg_id)
-        
-        captain_embed = discord.Embed(
-            title=f"New Member Joined Team {team_num}!",
-            description=f"{self.username} has joined your team.",
-            color=discord.Color.blue()
-        )
-        await send_dm(team.captain_id, embed=captain_embed)
-        
-        await interaction.response.send_message(f"Joined Team {team_num}! Check your DMs.", ephemeral=True)
+        await interaction.response.send_message(f"Join request sent to Team {team_num} captain! They will review your request.", ephemeral=True)
 
 @bot.tree.command(name="join_team", description="Join an existing team")
 async def join_team(interaction: discord.Interaction):
@@ -319,7 +370,7 @@ async def join_team(interaction: discord.Interaction):
     await view.create_team_buttons()
     
     if not view.children:
-        await interaction.followup.send("No teams available to join at this moment.", ephemeral=True)
+        await interaction.followup.send("No teams available to join at this moment. Try creating one with `/create_team`!", ephemeral=True)
         return
     
     info_embed = discord.Embed(title="Available Teams", color=discord.Color.blue())
@@ -415,6 +466,7 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
     await interaction.response.send_message(f"Team {team_num} has been reopened.", ephemeral=True)
+
 
 # Run the bot
 bot.run("MTQyOTUxMDg0ODQwNTMwNzYwNA.Gx4DoP.Vwy2YsoASOANbMhr9T27wj8A-C0JiPwB6PCUlo")
