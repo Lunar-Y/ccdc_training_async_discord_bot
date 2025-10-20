@@ -110,8 +110,8 @@ async def end_team(team_num: int, auto_end: bool = False):
         current_dir = pathlib.Path.cwd()
     
     script_path = current_dir / "SPAM" / "status.py"
-    start_vmid_reset = manager.settings.start_vmid + (team_num - 1) * (manager.settings.number_of_machines - 1)
-    end_vmid_reset = start_vmid_reset + manager.settings.number_of_machines
+    start_vmid_reset = manager.settings.start_vmid + (team_num - 1) * (manager.settings.number_of_machines)
+    end_vmid_reset = start_vmid_reset + (manager.settings.number_of_machines - 1)
     
     # Subprocess 1: --revert
     try:
@@ -146,6 +146,7 @@ async def end_team(team_num: int, auto_end: bool = False):
     # --- END: Moved Subprocess Logic ---
 
     manager.closed_teams.remove(team_num)
+    manager.available_team_nums.add(team_num)
     del manager.teams[team_num]
 
 
