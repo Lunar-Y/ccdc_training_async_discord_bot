@@ -6,9 +6,14 @@ from typing import Optional, Dict, List, Set
 from datetime import datetime, timedelta
 import json
 import os
+from dotenv import load_dotenv
 
 import sys
 import pathlib
+
+load_dotenv()
+
+token = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -839,4 +844,4 @@ async def save_data(interaction: discord.Interaction):
     await interaction.followup.send("All data has been saved successfully!", ephemeral=True)
 
 # Run the bot
-bot.run("TOKEN HERE")
+bot.run(token)
