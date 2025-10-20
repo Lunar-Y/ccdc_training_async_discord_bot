@@ -17,6 +17,8 @@ class TeamSettings:
         self.max_teams = 0
         self.duration_minutes = 0
         self.ip_base = "10.10.x.10"
+        self.start_vmid = 0
+        self.number_of_machines = 0
     
     def get_ip(self, team_num: int) -> str:
         return self.ip_base.replace("x", str(team_num))
@@ -162,8 +164,8 @@ async def admin_remove(interaction: discord.Interaction, user: discord.User):
     await interaction.response.send_message(f"Removed {user.mention} as an admin.", ephemeral=True)
 
 @bot.tree.command(name="admin_settings", description="Configure team settings (Admin only)")
-@app_commands.describe(max_size="Max team size", max_teams="Max number of teams", duration="Duration in minutes", ip_base="IP range base (e.g., 10.10.x.10)")
-async def admin_settings(interaction: discord.Interaction, max_size: int = None, max_teams: int = None, duration: int = None, ip_base: str = None):
+@app_commands.describe(max_size="Max team size", max_teams="Max number of teams", duration="Duration in minutes", ip_base="IP range base (e.g., 10.10.x.10)", start_vmid="VMID of first machine cloned", number_of_machines="Number of machines per network")
+async def admin_settings(interaction: discord.Interaction, max_size: int = None, max_teams: int = None, duration: int = None, ip_base: str = None, start_vmid: int = None, number_of_machines: int = None):
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -176,11 +178,15 @@ async def admin_settings(interaction: discord.Interaction, max_size: int = None,
         manager.settings.duration_minutes = duration
     if ip_base:
         manager.settings.ip_base = ip_base
+    if start_vmid:
+        manager.settings.start_vmid = start_vmid
+    if number_of_machines:
+        manager.settings.number_of_machines = number_of_machines
     
     manager.admin_guild_id = interaction.guild_id
     
     await interaction.response.send_message(
-        f"Settings updated:\n- Max Team Size: {manager.settings.max_team_size}\n- Max Teams: {manager.settings.max_teams}\n- Duration: {manager.settings.duration_minutes} minutes\n- IP Base: {manager.settings.ip_base}",
+        f"Settings updated:\n- Max Team Size: {manager.settings.max_team_size}\n- Max Teams: {manager.settings.max_teams}\n- Duration: {manager.settings.duration_minutes} minutes\n- IP Base: {manager.settings.ip_base}\n- VMID of First Machine: {manager.settings.start_vmid}\n- Number of Machines per Network: {manager.settings.number_of_machines}",
         ephemeral=True
     )
 
@@ -507,9 +513,6 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
     await interaction.response.send_message(f"Team {team_num} has been reopened.", ephemeral=True)
-
-
-
 
 
 # Run the bot
