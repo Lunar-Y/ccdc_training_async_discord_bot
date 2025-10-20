@@ -147,6 +147,20 @@ async def admin_add(interaction: discord.Interaction, user: discord.User):
     manager.admins.add(user.id)
     await interaction.response.send_message(f"Added {user.mention} as an admin.", ephemeral=True)
 
+@bot.tree.command(name="admin_remove", description="Administrator command to remove admins (Admin only)")
+@app_commands.describe(user="The user to remove as an admin")
+async def admin_remove(interaction: discord.Interaction, user: discord.User):
+    if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
+        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        return
+    
+    if user.id not in manager.admins:
+        await interaction.response.send_message(f"{user.mention} is not an admin.", ephemeral=True)
+        return
+    
+    manager.admins.remove(user.id)
+    await interaction.response.send_message(f"Removed {user.mention} as an admin.", ephemeral=True)
+
 @bot.tree.command(name="admin_settings", description="Configure team settings (Admin only)")
 @app_commands.describe(max_size="Max team size", max_teams="Max number of teams", duration="Duration in minutes", ip_base="IP range base (e.g., 10.10.x.10)")
 async def admin_settings(interaction: discord.Interaction, max_size: int = None, max_teams: int = None, duration: int = None, ip_base: str = None):
@@ -493,6 +507,10 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
     await interaction.response.send_message(f"Team {team_num} has been reopened.", ephemeral=True)
+
+
+
+
 
 # Run the bot
 bot.run("MTQyOTUxMDg0ODQwNTMwNzYwNA.Gx4DoP.Vwy2YsoASOANbMhr9T27wj8A-C0JiPwB6PCUlo")
