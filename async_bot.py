@@ -4,6 +4,8 @@ from discord import app_commands
 import asyncio
 from typing import Optional, Dict, List, Set
 from datetime import datetime, timedelta
+import json
+import os
 
 import sys
 import pathlib
@@ -13,6 +15,12 @@ intents.message_content = True
 intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# File paths for persistence
+DATA_DIR = pathlib.Path("bot_data")
+SETTINGS_FILE = DATA_DIR / "settings.json"
+TEAMS_FILE = DATA_DIR / "teams.json"
+ADMINS_FILE = DATA_DIR / "admins.json"
 
 class TeamSettings:
     def __init__(self):
@@ -25,6 +33,27 @@ class TeamSettings:
     
     def get_ip(self, team_num: int) -> str:
         return self.ip_base.replace("x", str(team_num))
+    
+    def to_dict(self) -> dict:
+        return {
+            "max_team_size": self.max_team_size,
+            "max_teams": self.max_teams,
+            "duration_minutes": self.duration_minutes,
+            "ip_base": self.ip_base,
+            "start_vmid": self.start_vmid,
+            "number_of_machines": self.number_of_machines
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict):
+        settings = cls()
+        settings.max_team_size = data.get("max_team_size", 0)
+        settings.max_teams = data.get("max_teams", 0)
+        settings.duration_minutes = data.get("duration_minutes", 0)
+        settings.ip_base = data.get("ip_base", "10.10.x.10")
+        settings.start_vmid = data.get("start_vmid", 0)
+        settings.number_of_machines = data.get("number_of_machines", 0)
+        return settings
 
 class Team:
     def __init__(self, team_num: int, captain_id: int, settings: TeamSettings):
@@ -37,6 +66,32 @@ class Team:
         self.is_active = True
         self.timer_message_ids: Dict[int, tuple] = {}
         self.halfway_notified = False
+    
+    def to_dict(self) -> dict:
+        return {
+            "team_num": self.team_num,
+            "captain_id": self.captain_id,
+            "members": self.members,
+            "created_at": self.created_at.isoformat(),
+            "end_time": self.end_time.isoformat(),
+            "is_active": self.is_active,
+            "timer_message_ids": {str(k): v for k, v in self.timer_message_ids.items()},
+            "halfway_notified": self.halfway_notified
+        }
+    
+    @classmethod
+    def from_dict(cls, data: dict, settings: TeamSettings):
+        team = cls.__new__(cls)
+        team.team_num = data["team_num"]
+        team.captain_id = data["captain_id"]
+        team.members = {int(k): v for k, v in data["members"].items()}
+        team.settings = settings
+        team.created_at = datetime.fromisoformat(data["created_at"])
+        team.end_time = datetime.fromisoformat(data["end_time"])
+        team.is_active = data["is_active"]
+        team.timer_message_ids = {int(k): tuple(v) for k, v in data.get("timer_message_ids", {}).items()}
+        team.halfway_notified = data.get("halfway_notified", False)
+        return team
 
 class TeamManager:
     def __init__(self):
@@ -51,12 +106,117 @@ class TeamManager:
     def update_max_teams(self, new_max: int):
         old_max = self.settings.max_teams
         self.settings.max_teams = new_max
-
-
         
         if new_max > old_max:
             for team_num in range(old_max + 1, new_max + 1):
                 self.available_team_nums.add(team_num)
+        
+        self.save_settings()
+    
+    def save_settings(self):
+        """Save settings to JSON file"""
+        try:
+            DATA_DIR.mkdir(exist_ok=True)
+            with open(SETTINGS_FILE, 'w') as f:
+                json.dump(self.settings.to_dict(), f, indent=2)
+            print(f"Settings saved to {SETTINGS_FILE}")
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+    
+    def load_settings(self):
+        """Load settings from JSON file"""
+        try:
+            if SETTINGS_FILE.exists():
+                with open(SETTINGS_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.settings = TeamSettings.from_dict(data)
+                    self.available_team_nums = set(range(1, self.settings.max_teams + 1))
+                    print(f"Settings loaded from {SETTINGS_FILE}")
+                    return True
+        except Exception as e:
+            print(f"Error loading settings: {e}")
+        return False
+    
+    def save_teams(self):
+        """Save teams data to JSON file"""
+        try:
+            DATA_DIR.mkdir(exist_ok=True)
+            data = {
+                "teams": {str(num): team.to_dict() for num, team in self.teams.items()},
+                "user_teams": {str(k): v for k, v in self.user_teams.items()},
+                "available_team_nums": list(self.available_team_nums),
+                "closed_teams": list(self.closed_teams),
+                "admin_guild_id": self.admin_guild_id
+            }
+            with open(TEAMS_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            print(f"Teams saved to {TEAMS_FILE}")
+        except Exception as e:
+            print(f"Error saving teams: {e}")
+    
+    def load_teams(self):
+        """Load teams data from JSON file"""
+        try:
+            if TEAMS_FILE.exists():
+                with open(TEAMS_FILE, 'r') as f:
+                    data = json.load(f)
+                    
+                    # Restore teams
+                    self.teams = {}
+                    for team_num_str, team_data in data.get("teams", {}).items():
+                        team = Team.from_dict(team_data, self.settings)
+                        self.teams[int(team_num_str)] = team
+                    
+                    # Restore user_teams mapping
+                    self.user_teams = {int(k): v for k, v in data.get("user_teams", {}).items()}
+                    
+                    # Restore available team numbers
+                    self.available_team_nums = set(data.get("available_team_nums", []))
+                    
+                    # Restore closed teams
+                    self.closed_teams = set(data.get("closed_teams", []))
+                    
+                    # Restore admin guild ID
+                    self.admin_guild_id = data.get("admin_guild_id")
+                    
+                    print(f"Teams loaded from {TEAMS_FILE}")
+                    print(f"Restored {len(self.teams)} teams")
+                    return True
+        except Exception as e:
+            print(f"Error loading teams: {e}")
+        return False
+    
+    def save_admins(self):
+        """Save admins to JSON file"""
+        try:
+            DATA_DIR.mkdir(exist_ok=True)
+            data = {
+                "admins": list(self.admins)
+            }
+            with open(ADMINS_FILE, 'w') as f:
+                json.dump(data, f, indent=2)
+            print(f"Admins saved to {ADMINS_FILE}")
+        except Exception as e:
+            print(f"Error saving admins: {e}")
+    
+    def load_admins(self):
+        """Load admins from JSON file"""
+        try:
+            if ADMINS_FILE.exists():
+                with open(ADMINS_FILE, 'r') as f:
+                    data = json.load(f)
+                    self.admins = set(data.get("admins", []))
+                    print(f"Admins loaded from {ADMINS_FILE}")
+                    return True
+        except Exception as e:
+            print(f"Error loading admins: {e}")
+        return False
+    
+    def load_all(self):
+        """Load all saved data"""
+        self.load_settings()
+        self.load_admins()
+        self.load_teams()
 
 manager = TeamManager()
 
@@ -115,7 +275,6 @@ async def end_team(team_num: int, auto_end: bool = False):
     
     # Subprocess 1: --revert
     try:
-
         process = await asyncio.create_subprocess_exec(
             sys.executable, str(script_path),
             "--revert", "-r", 
@@ -125,13 +284,11 @@ async def end_team(team_num: int, auto_end: bool = False):
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
             print(f"Error (revert) status.py for team {team_num}: {stderr.decode()}")
-            # You could notify admins of the script failure here
     except Exception as e:
         print(f"Failed to start subprocess (revert) for team {team_num}: {e}")
 
     # Subprocess 2: -s
     try:
-
         process = await asyncio.create_subprocess_exec(
             sys.executable, str(script_path),
             "-s", "-r", 
@@ -148,11 +305,18 @@ async def end_team(team_num: int, auto_end: bool = False):
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
     del manager.teams[team_num]
+    
+    # Save state after team ends
+    manager.save_teams()
 
 
 @bot.event
 async def on_ready():
     print(f"Bot logged in as {bot.user}")
+    
+    # Load all saved data
+    manager.load_all()
+    
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
@@ -160,6 +324,7 @@ async def on_ready():
         print(e)
     
     start_timer_updates.start()
+    auto_save_task.start()
 
 @tasks.loop(seconds=10)
 async def start_timer_updates():
@@ -186,6 +351,15 @@ async def start_timer_updates():
             
             for admin_id in manager.admins:
                 await send_dm(admin_id, embed=halfway_embed)
+            
+            # Save state after halfway notification
+            manager.save_teams()
+
+@tasks.loop(minutes=5)
+async def auto_save_task():
+    """Automatically save data every 5 minutes"""
+    manager.save_teams()
+    print("Auto-save completed")
 
 @bot.tree.command(name="admin_add", description="Administrator command to add new admins (Admin only)")
 @app_commands.describe(user="The user to make an admin")
@@ -195,6 +369,7 @@ async def admin_add(interaction: discord.Interaction, user: discord.User):
         return
     
     manager.admins.add(user.id)
+    manager.save_admins()
     await interaction.response.send_message(f"Added {user.mention} as an admin.", ephemeral=True)
 
 @bot.tree.command(name="admin_remove", description="Administrator command to remove admins (Admin only)")
@@ -209,6 +384,7 @@ async def admin_remove(interaction: discord.Interaction, user: discord.User):
         return
     
     manager.admins.remove(user.id)
+    manager.save_admins()
     await interaction.response.send_message(f"Removed {user.mention} as an admin.", ephemeral=True)
 
 @bot.tree.command(name="admin_settings", description="Configure team settings (Admin only)")
@@ -232,6 +408,8 @@ async def admin_settings(interaction: discord.Interaction, max_size: int = None,
         manager.settings.number_of_machines = number_of_machines
     
     manager.admin_guild_id = interaction.guild_id
+    manager.save_settings()
+    manager.save_teams()
     
     await interaction.response.send_message(
         f"Settings updated:\n- Max Team Size: {manager.settings.max_team_size}\n- Max Teams: {manager.settings.max_teams}\n- Duration: {manager.settings.duration_minutes} minutes\n- IP Base: {manager.settings.ip_base}\n- VMID of First Machine: {manager.settings.start_vmid}\n- Number of Machines per Network: {manager.settings.number_of_machines}",
@@ -318,6 +496,8 @@ async def create_team(interaction: discord.Interaction):
     if channel_id and msg_id:
         team.timer_message_ids[user_id] = (channel_id, msg_id)
     
+    manager.save_teams()
+    
     await interaction.followup.send(f"Team {team_num} created! Check your DMs for details.", ephemeral=True)
 
 class JoinRequestView(discord.ui.View):
@@ -359,6 +539,8 @@ class JoinRequestView(discord.ui.View):
             color=discord.Color.green()
         )
         await send_dm(self.user_id, embed=approved_embed)
+        
+        manager.save_teams()
         
         await interaction.response.send_message(f"Approved {self.username} to join Team {self.team_num}!", ephemeral=True)
     
@@ -445,6 +627,8 @@ async def reset_teams(interaction: discord.Interaction):
     manager.closed_teams.clear()
     manager.available_team_nums = set(range(1, manager.settings.max_teams + 1))
     
+    manager.save_teams()
+    
     await interaction.followup.send("All teams have been reset and reopened!", ephemeral=True)
 
 @bot.tree.command(name="join_team", description="Join an existing team")
@@ -524,6 +708,7 @@ async def leave_team(interaction: discord.Interaction):
                 color=discord.Color.gold()
             )
             await send_dm(member_id, embed=member_left_embed)
+        manager.save_teams()
     
     await interaction.followup.send(f"Left Team {team_num}.", ephemeral=True)
 
@@ -560,8 +745,24 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
     
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
+    
+    manager.save_teams()
+    
     await interaction.response.send_message(f"Team {team_num} has been reopened.", ephemeral=True)
 
+@bot.tree.command(name="save_data", description="Manually save all data (Admin only)")
+async def save_data(interaction: discord.Interaction):
+    if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
+        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    manager.save_settings()
+    manager.save_admins()
+    manager.save_teams()
+    
+    await interaction.followup.send("All data has been saved successfully!", ephemeral=True)
 
 # Run the bot
 bot.run("TOKEN HERE")
