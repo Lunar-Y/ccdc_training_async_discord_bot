@@ -5,6 +5,9 @@ import asyncio
 from typing import Optional, Dict, List, Set
 from datetime import datetime, timedelta
 
+import sys
+import pathlib
+
 intents = discord.Intents.default()
 intents.message_content = True
 intents.dm_messages = True
@@ -99,8 +102,52 @@ async def end_team(team_num: int, auto_end: bool = False):
     
     for admin_id in manager.admins:
         await send_dm(admin_id, embed=embed)
+
+    # --- START: Moved Subprocess Logic ---
+    try:
+        current_dir = pathlib.Path(__file__).parent.resolve()
+    except NameError:
+        current_dir = pathlib.Path.cwd()
     
+    script_path = current_dir / "SPAM" / "status.py"
+    start_vmid_reset = manager.settings.start_vmid + (team_num - 1) * (manager.settings.number_of_machines - 1)
+    end_vmid_reset = start_vmid_reset + manager.settings.number_of_machines
+    
+    # Subprocess 1: --revert
+    try:
+
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, str(script_path),
+            "--revert", "-r", 
+            str(start_vmid_reset), str(end_vmid_reset),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            print(f"Error (revert) status.py for team {team_num}: {stderr.decode()}")
+            # You could notify admins of the script failure here
+    except Exception as e:
+        print(f"Failed to start subprocess (revert) for team {team_num}: {e}")
+
+    # Subprocess 2: -s
+    try:
+
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, str(script_path),
+            "-s", "-r", 
+            str(start_vmid_reset), str(end_vmid_reset),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            print(f"Error (-s) status.py for team {team_num}: {stderr.decode()}")
+    except Exception as e:
+        print(f"Failed to start subprocess (-s) for team {team_num}: {e}")
+    # --- END: Moved Subprocess Logic ---
+
+    manager.closed_teams.remove(team_num)
     del manager.teams[team_num]
+
 
 @bot.event
 async def on_ready():
