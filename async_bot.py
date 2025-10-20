@@ -16,11 +16,14 @@ intents.dm_messages = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# File paths for persistence
+# Base directory for all bot data
 DATA_DIR = pathlib.Path("bot_data")
-SETTINGS_FILE = DATA_DIR / "settings.json"
-TEAMS_FILE = DATA_DIR / "teams.json"
-ADMINS_FILE = DATA_DIR / "admins.json"
+
+def get_guild_data_dir(guild_id: int) -> pathlib.Path:
+    """Get the data directory for a specific guild"""
+    guild_dir = DATA_DIR / str(guild_id)
+    guild_dir.mkdir(parents=True, exist_ok=True)
+    return guild_dir
 
 class TeamSettings:
     def __init__(self):
@@ -93,14 +96,15 @@ class Team:
         team.halfway_notified = data.get("halfway_notified", False)
         return team
 
-class TeamManager:
-    def __init__(self):
+class GuildTeamManager:
+    """Manages teams for a single guild"""
+    def __init__(self, guild_id: int):
+        self.guild_id = guild_id
         self.settings = TeamSettings()
         self.teams: Dict[int, Team] = {}
         self.user_teams: Dict[int, int] = {}
         self.available_team_nums: Set[int] = set(range(1, self.settings.max_teams + 1))
         self.admins: Set[int] = set()
-        self.admin_guild_id: Optional[int] = None
         self.closed_teams: Set[int] = set()
     
     def update_max_teams(self, new_max: int):
@@ -113,52 +117,60 @@ class TeamManager:
         
         self.save_settings()
     
+    def get_settings_file(self) -> pathlib.Path:
+        return get_guild_data_dir(self.guild_id) / "settings.json"
+    
+    def get_teams_file(self) -> pathlib.Path:
+        return get_guild_data_dir(self.guild_id) / "teams.json"
+    
+    def get_admins_file(self) -> pathlib.Path:
+        return get_guild_data_dir(self.guild_id) / "admins.json"
+    
     def save_settings(self):
         """Save settings to JSON file"""
         try:
-            DATA_DIR.mkdir(exist_ok=True)
-            with open(SETTINGS_FILE, 'w') as f:
+            with open(self.get_settings_file(), 'w') as f:
                 json.dump(self.settings.to_dict(), f, indent=2)
-            print(f"Settings saved to {SETTINGS_FILE}")
+            print(f"[Guild {self.guild_id}] Settings saved")
         except Exception as e:
-            print(f"Error saving settings: {e}")
+            print(f"[Guild {self.guild_id}] Error saving settings: {e}")
     
     def load_settings(self):
         """Load settings from JSON file"""
         try:
-            if SETTINGS_FILE.exists():
-                with open(SETTINGS_FILE, 'r') as f:
+            settings_file = self.get_settings_file()
+            if settings_file.exists():
+                with open(settings_file, 'r') as f:
                     data = json.load(f)
                     self.settings = TeamSettings.from_dict(data)
                     self.available_team_nums = set(range(1, self.settings.max_teams + 1))
-                    print(f"Settings loaded from {SETTINGS_FILE}")
+                    print(f"[Guild {self.guild_id}] Settings loaded")
                     return True
         except Exception as e:
-            print(f"Error loading settings: {e}")
+            print(f"[Guild {self.guild_id}] Error loading settings: {e}")
         return False
     
     def save_teams(self):
         """Save teams data to JSON file"""
         try:
-            DATA_DIR.mkdir(exist_ok=True)
             data = {
                 "teams": {str(num): team.to_dict() for num, team in self.teams.items()},
                 "user_teams": {str(k): v for k, v in self.user_teams.items()},
                 "available_team_nums": list(self.available_team_nums),
-                "closed_teams": list(self.closed_teams),
-                "admin_guild_id": self.admin_guild_id
+                "closed_teams": list(self.closed_teams)
             }
-            with open(TEAMS_FILE, 'w') as f:
+            with open(self.get_teams_file(), 'w') as f:
                 json.dump(data, f, indent=2)
-            print(f"Teams saved to {TEAMS_FILE}")
+            print(f"[Guild {self.guild_id}] Teams saved")
         except Exception as e:
-            print(f"Error saving teams: {e}")
+            print(f"[Guild {self.guild_id}] Error saving teams: {e}")
     
     def load_teams(self):
         """Load teams data from JSON file"""
         try:
-            if TEAMS_FILE.exists():
-                with open(TEAMS_FILE, 'r') as f:
+            teams_file = self.get_teams_file()
+            if teams_file.exists():
+                with open(teams_file, 'r') as f:
                     data = json.load(f)
                     
                     # Restore teams
@@ -176,40 +188,36 @@ class TeamManager:
                     # Restore closed teams
                     self.closed_teams = set(data.get("closed_teams", []))
                     
-                    # Restore admin guild ID
-                    self.admin_guild_id = data.get("admin_guild_id")
-                    
-                    print(f"Teams loaded from {TEAMS_FILE}")
-                    print(f"Restored {len(self.teams)} teams")
+                    print(f"[Guild {self.guild_id}] Teams loaded - {len(self.teams)} active teams")
                     return True
         except Exception as e:
-            print(f"Error loading teams: {e}")
+            print(f"[Guild {self.guild_id}] Error loading teams: {e}")
         return False
     
     def save_admins(self):
         """Save admins to JSON file"""
         try:
-            DATA_DIR.mkdir(exist_ok=True)
             data = {
                 "admins": list(self.admins)
             }
-            with open(ADMINS_FILE, 'w') as f:
+            with open(self.get_admins_file(), 'w') as f:
                 json.dump(data, f, indent=2)
-            print(f"Admins saved to {ADMINS_FILE}")
+            print(f"[Guild {self.guild_id}] Admins saved")
         except Exception as e:
-            print(f"Error saving admins: {e}")
+            print(f"[Guild {self.guild_id}] Error saving admins: {e}")
     
     def load_admins(self):
         """Load admins from JSON file"""
         try:
-            if ADMINS_FILE.exists():
-                with open(ADMINS_FILE, 'r') as f:
+            admins_file = self.get_admins_file()
+            if admins_file.exists():
+                with open(admins_file, 'r') as f:
                     data = json.load(f)
                     self.admins = set(data.get("admins", []))
-                    print(f"Admins loaded from {ADMINS_FILE}")
+                    print(f"[Guild {self.guild_id}] Admins loaded - {len(self.admins)} admins")
                     return True
         except Exception as e:
-            print(f"Error loading admins: {e}")
+            print(f"[Guild {self.guild_id}] Error loading admins: {e}")
         return False
     
     def load_all(self):
@@ -218,7 +226,33 @@ class TeamManager:
         self.load_admins()
         self.load_teams()
 
-manager = TeamManager()
+class MultiGuildManager:
+    """Manages team managers for multiple guilds"""
+    def __init__(self):
+        self.guild_managers: Dict[int, GuildTeamManager] = {}
+    
+    def get_manager(self, guild_id: int) -> GuildTeamManager:
+        """Get or create a manager for a specific guild"""
+        if guild_id not in self.guild_managers:
+            manager = GuildTeamManager(guild_id)
+            manager.load_all()
+            self.guild_managers[guild_id] = manager
+        return self.guild_managers[guild_id]
+    
+    def load_all_guilds(self):
+        """Load data for all guilds that have saved data"""
+        if not DATA_DIR.exists():
+            return
+        
+        for guild_dir in DATA_DIR.iterdir():
+            if guild_dir.is_dir() and guild_dir.name.isdigit():
+                guild_id = int(guild_dir.name)
+                manager = GuildTeamManager(guild_id)
+                manager.load_all()
+                self.guild_managers[guild_id] = manager
+                print(f"Loaded data for guild {guild_id}")
+
+multi_manager = MultiGuildManager()
 
 async def send_dm(user_id: int, content: str = None, embed: discord.Embed = None, view: discord.ui.View = None) -> tuple:
     try:
@@ -239,7 +273,9 @@ async def create_timer_embed(team: Team):
     
     return embed
 
-async def end_team(team_num: int, auto_end: bool = False):
+async def end_team(guild_id: int, team_num: int, auto_end: bool = False):
+    manager = multi_manager.get_manager(guild_id)
+    
     if team_num not in manager.teams:
         return
     
@@ -263,7 +299,7 @@ async def end_team(team_num: int, auto_end: bool = False):
     for admin_id in manager.admins:
         await send_dm(admin_id, embed=embed)
 
-    # --- START: Moved Subprocess Logic ---
+    # --- START: Subprocess Logic ---
     try:
         current_dir = pathlib.Path(__file__).parent.resolve()
     except NameError:
@@ -283,9 +319,9 @@ async def end_team(team_num: int, auto_end: bool = False):
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            print(f"Error (revert) status.py for team {team_num}: {stderr.decode()}")
+            print(f"[Guild {guild_id}] Error (revert) status.py for team {team_num}: {stderr.decode()}")
     except Exception as e:
-        print(f"Failed to start subprocess (revert) for team {team_num}: {e}")
+        print(f"[Guild {guild_id}] Failed to start subprocess (revert) for team {team_num}: {e}")
 
     # Subprocess 2: -s
     try:
@@ -297,10 +333,10 @@ async def end_team(team_num: int, auto_end: bool = False):
         )
         stdout, stderr = await process.communicate()
         if process.returncode != 0:
-            print(f"Error (-s) status.py for team {team_num}: {stderr.decode()}")
+            print(f"[Guild {guild_id}] Error (-s) status.py for team {team_num}: {stderr.decode()}")
     except Exception as e:
-        print(f"Failed to start subprocess (-s) for team {team_num}: {e}")
-    # --- END: Moved Subprocess Logic ---
+        print(f"[Guild {guild_id}] Failed to start subprocess (-s) for team {team_num}: {e}")
+    # --- END: Subprocess Logic ---
 
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
@@ -314,8 +350,8 @@ async def end_team(team_num: int, auto_end: bool = False):
 async def on_ready():
     print(f"Bot logged in as {bot.user}")
     
-    # Load all saved data
-    manager.load_all()
+    # Load all saved guild data
+    multi_manager.load_all_guilds()
     
     try:
         synced = await bot.tree.sync()
@@ -328,42 +364,46 @@ async def on_ready():
 
 @tasks.loop(seconds=10)
 async def start_timer_updates():
-    for team_num, team in list(manager.teams.items()):
-        if not team.is_active:
-            continue
-        
-        time_left = team.end_time - datetime.now()
-        
-        if time_left.total_seconds() <= 0:
-            await end_team(team_num, auto_end=True)
-            continue
-        
-        total_seconds = team.settings.duration_minutes * 60
-        if not team.halfway_notified and time_left.total_seconds() <= total_seconds / 2:
-            team.halfway_notified = True
-            halfway_embed = discord.Embed(
-                title=f"Team {team.team_num} - Halfway Point Reached!",
-                description="Your team has reached the halfway mark.",
-                color=discord.Color.orange()
-            )
-            for member_id in team.members.keys():
-                await send_dm(member_id, embed=halfway_embed)
+    for guild_id, manager in list(multi_manager.guild_managers.items()):
+        for team_num, team in list(manager.teams.items()):
+            if not team.is_active:
+                continue
             
-            for admin_id in manager.admins:
-                await send_dm(admin_id, embed=halfway_embed)
+            time_left = team.end_time - datetime.now()
             
-            # Save state after halfway notification
-            manager.save_teams()
+            if time_left.total_seconds() <= 0:
+                await end_team(guild_id, team_num, auto_end=True)
+                continue
+            
+            total_seconds = team.settings.duration_minutes * 60
+            if not team.halfway_notified and time_left.total_seconds() <= total_seconds / 2:
+                team.halfway_notified = True
+                halfway_embed = discord.Embed(
+                    title=f"Team {team.team_num} - Halfway Point Reached!",
+                    description="Your team has reached the halfway mark.",
+                    color=discord.Color.orange()
+                )
+                for member_id in team.members.keys():
+                    await send_dm(member_id, embed=halfway_embed)
+                
+                for admin_id in manager.admins:
+                    await send_dm(admin_id, embed=halfway_embed)
+                
+                # Save state after halfway notification
+                manager.save_teams()
 
 @tasks.loop(minutes=5)
 async def auto_save_task():
     """Automatically save data every 5 minutes"""
-    manager.save_teams()
-    print("Auto-save completed")
+    for guild_id, manager in multi_manager.guild_managers.items():
+        manager.save_teams()
+    print("Auto-save completed for all guilds")
 
 @bot.tree.command(name="admin_add", description="Administrator command to add new admins (Admin only)")
 @app_commands.describe(user="The user to make an admin")
 async def admin_add(interaction: discord.Interaction, user: discord.User):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -375,6 +415,8 @@ async def admin_add(interaction: discord.Interaction, user: discord.User):
 @bot.tree.command(name="admin_remove", description="Administrator command to remove admins (Admin only)")
 @app_commands.describe(user="The user to remove as an admin")
 async def admin_remove(interaction: discord.Interaction, user: discord.User):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -390,6 +432,8 @@ async def admin_remove(interaction: discord.Interaction, user: discord.User):
 @bot.tree.command(name="admin_settings", description="Configure team settings (Admin only)")
 @app_commands.describe(max_size="Max team size", max_teams="Max number of teams", duration="Duration in minutes", ip_base="IP range base (e.g., 10.10.x.10)", start_vmid="VMID of first machine cloned", number_of_machines="Number of machines per network")
 async def admin_settings(interaction: discord.Interaction, max_size: int = None, max_teams: int = None, duration: int = None, ip_base: str = None, start_vmid: int = None, number_of_machines: int = None):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -407,7 +451,6 @@ async def admin_settings(interaction: discord.Interaction, max_size: int = None,
     if number_of_machines:
         manager.settings.number_of_machines = number_of_machines
     
-    manager.admin_guild_id = interaction.guild_id
     manager.save_settings()
     manager.save_teams()
     
@@ -418,6 +461,8 @@ async def admin_settings(interaction: discord.Interaction, max_size: int = None,
 
 @bot.tree.command(name="view_settings", description="View current team settings (Admin only)")
 async def view_settings(interaction: discord.Interaction):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -434,13 +479,16 @@ async def view_settings(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class RequestMoreTeamsView(discord.ui.View):
-    def __init__(self, user_id: int, username: str):
+    def __init__(self, user_id: int, username: str, guild_id: int):
         super().__init__(timeout=None)
         self.user_id = user_id
         self.username = username
+        self.guild_id = guild_id
     
     @discord.ui.button(label="Request More Teams", style=discord.ButtonStyle.danger)
     async def request_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        manager = multi_manager.get_manager(self.guild_id)
+        
         embed = discord.Embed(
             title="Team Creation Request",
             description=f"{self.username} has requested more teams to be created.",
@@ -458,6 +506,7 @@ class RequestMoreTeamsView(discord.ui.View):
 async def create_team(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
+    manager = multi_manager.get_manager(interaction.guild_id)
     user_id = interaction.user.id
     
     if user_id in manager.user_teams:
@@ -465,12 +514,12 @@ async def create_team(interaction: discord.Interaction):
         return
     
     if not manager.available_team_nums:
-        view = RequestMoreTeamsView(user_id, interaction.user.name)
+        view = RequestMoreTeamsView(user_id, interaction.user.name, interaction.guild_id)
         await interaction.followup.send("All teams are currently full! Would you like to request more teams?", view=view, ephemeral=True)
         return
     
     if len(manager.teams) >= manager.settings.max_teams:
-        view = RequestMoreTeamsView(user_id, interaction.user.name)
+        view = RequestMoreTeamsView(user_id, interaction.user.name, interaction.guild_id)
         await interaction.followup.send("All teams are currently full! Would you like to request more teams?", view=view, ephemeral=True)
         return
     
@@ -496,19 +545,23 @@ async def create_team(interaction: discord.Interaction):
     if channel_id and msg_id:
         team.timer_message_ids[user_id] = (channel_id, msg_id)
     
+    # Save state after team creation
     manager.save_teams()
     
     await interaction.followup.send(f"Team {team_num} created! Check your DMs for details.", ephemeral=True)
 
 class JoinRequestView(discord.ui.View):
-    def __init__(self, user_id: int, username: str, team_num: int):
+    def __init__(self, user_id: int, username: str, team_num: int, guild_id: int):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.username = username
         self.team_num = team_num
+        self.guild_id = guild_id
     
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
     async def approve_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        manager = multi_manager.get_manager(self.guild_id)
+        
         if interaction.user.id != manager.teams[self.team_num].captain_id:
             await interaction.response.send_message("Only the team captain can approve join requests.", ephemeral=True)
             return
@@ -540,12 +593,15 @@ class JoinRequestView(discord.ui.View):
         )
         await send_dm(self.user_id, embed=approved_embed)
         
+        # Save state after member joins
         manager.save_teams()
         
         await interaction.response.send_message(f"Approved {self.username} to join Team {self.team_num}!", ephemeral=True)
     
     @discord.ui.button(label="Deny", style=discord.ButtonStyle.danger)
     async def deny_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        manager = multi_manager.get_manager(self.guild_id)
+        
         if interaction.user.id != manager.teams[self.team_num].captain_id:
             await interaction.response.send_message("Only the team captain can deny join requests.", ephemeral=True)
             return
@@ -560,12 +616,15 @@ class JoinRequestView(discord.ui.View):
         await interaction.response.send_message(f"Denied {self.username}'s join request.", ephemeral=True)
 
 class JoinTeamButtonView(discord.ui.View):
-    def __init__(self, user_id: int, username: str):
+    def __init__(self, user_id: int, username: str, guild_id: int):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.username = username
+        self.guild_id = guild_id
     
     async def create_team_buttons(self):
+        manager = multi_manager.get_manager(self.guild_id)
+        
         for team_num, team in sorted(manager.teams.items()):
             if len(team.members) < manager.settings.max_team_size and team.is_active:
                 button = discord.ui.Button(
@@ -576,6 +635,8 @@ class JoinTeamButtonView(discord.ui.View):
                 self.add_item(button)
     
     async def join_callback(self, interaction: discord.Interaction, team_num: int):
+        manager = multi_manager.get_manager(self.guild_id)
+        
         if team_num not in manager.teams:
             await interaction.response.send_message("That team no longer exists.", ephemeral=True)
             return
@@ -585,7 +646,7 @@ class JoinTeamButtonView(discord.ui.View):
             await interaction.response.send_message("That team is now full!", ephemeral=True)
             return
         
-        request_view = JoinRequestView(self.user_id, self.username, team_num)
+        request_view = JoinRequestView(self.user_id, self.username, team_num, self.guild_id)
         
         request_embed = discord.Embed(
             title=f"Join Request for Team {team_num}",
@@ -604,6 +665,8 @@ class JoinTeamButtonView(discord.ui.View):
 
 @bot.tree.command(name="reset", description="Reset all teams (Admin only)")
 async def reset_teams(interaction: discord.Interaction):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -627,6 +690,7 @@ async def reset_teams(interaction: discord.Interaction):
     manager.closed_teams.clear()
     manager.available_team_nums = set(range(1, manager.settings.max_teams + 1))
     
+    # Save state after reset
     manager.save_teams()
     
     await interaction.followup.send("All teams have been reset and reopened!", ephemeral=True)
@@ -635,6 +699,7 @@ async def reset_teams(interaction: discord.Interaction):
 async def join_team(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
+    manager = multi_manager.get_manager(interaction.guild_id)
     user_id = interaction.user.id
     
     if user_id in manager.user_teams:
@@ -645,7 +710,7 @@ async def join_team(interaction: discord.Interaction):
         await interaction.followup.send("No teams available. Try creating one with `/create_team`!", ephemeral=True)
         return
     
-    view = JoinTeamButtonView(user_id, interaction.user.name)
+    view = JoinTeamButtonView(user_id, interaction.user.name, interaction.guild_id)
     await view.create_team_buttons()
     
     if not view.children:
@@ -669,6 +734,7 @@ async def join_team(interaction: discord.Interaction):
 async def leave_team(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
+    manager = multi_manager.get_manager(interaction.guild_id)
     user_id = interaction.user.id
     
     if user_id not in manager.user_teams:
@@ -690,7 +756,7 @@ async def leave_team(interaction: discord.Interaction):
     await send_dm(user_id, embed=leave_embed)
     
     if not team.members:
-        await end_team(team_num)
+        await end_team(interaction.guild_id, team_num)
     else:
         if user_id == team.captain_id:
             team.captain_id = list(team.members.keys())[0]
@@ -708,6 +774,8 @@ async def leave_team(interaction: discord.Interaction):
                 color=discord.Color.gold()
             )
             await send_dm(member_id, embed=member_left_embed)
+        
+        # Save state after member leaves
         manager.save_teams()
     
     await interaction.followup.send(f"Left Team {team_num}.", ephemeral=True)
@@ -716,6 +784,7 @@ async def leave_team(interaction: discord.Interaction):
 async def end_team_command(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
     
+    manager = multi_manager.get_manager(interaction.guild_id)
     user_id = interaction.user.id
     
     if user_id not in manager.user_teams:
@@ -729,12 +798,14 @@ async def end_team_command(interaction: discord.Interaction):
         await interaction.followup.send("Only the team captain can end the team!", ephemeral=True)
         return
     
-    await end_team(team_num)
+    await end_team(interaction.guild_id, team_num)
     await interaction.followup.send(f"Team {team_num} has been ended.", ephemeral=True)
 
 @bot.tree.command(name="reopen_team", description="Reopen a closed team (Admin only)")
 @app_commands.describe(team_num="The team number to reopen")
 async def reopen_team(interaction: discord.Interaction, team_num: int):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
@@ -746,12 +817,15 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
     
+    # Save state after reopening team
     manager.save_teams()
     
     await interaction.response.send_message(f"Team {team_num} has been reopened.", ephemeral=True)
 
 @bot.tree.command(name="save_data", description="Manually save all data (Admin only)")
 async def save_data(interaction: discord.Interaction):
+    manager = multi_manager.get_manager(interaction.guild_id)
+    
     if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
         return
