@@ -352,6 +352,33 @@ class JoinTeamButtonView(discord.ui.View):
         
         await interaction.response.send_message(f"Join request sent to Team {team_num} captain! They will review your request.", ephemeral=True)
 
+@bot.tree.command(name="reset", description="Reset all teams (Admin only)")
+async def reset_teams(interaction: discord.Interaction):
+    if interaction.user.id not in manager.admins and interaction.user.id != interaction.guild.owner_id:
+        await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
+        return
+    
+    await interaction.response.defer(ephemeral=True)
+    
+    # Notify all team members that their teams are being reset
+    for team_num, team in list(manager.teams.items()):
+        reset_embed = discord.Embed(
+            title=f"Team {team_num} - Reset",
+            description="All teams have been reset by an administrator.",
+            color=discord.Color.red()
+        )
+        for member_id in team.members.keys():
+            await send_dm(member_id, embed=reset_embed)
+            if member_id in manager.user_teams:
+                del manager.user_teams[member_id]
+    
+    # Clear all teams and reopen them
+    manager.teams.clear()
+    manager.closed_teams.clear()
+    manager.available_team_nums = set(range(1, manager.settings.max_teams + 1))
+    
+    await interaction.followup.send("All teams have been reset and reopened!", ephemeral=True)
+
 @bot.tree.command(name="join_team", description="Join an existing team")
 async def join_team(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
@@ -466,7 +493,6 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
     manager.closed_teams.remove(team_num)
     manager.available_team_nums.add(team_num)
     await interaction.response.send_message(f"Team {team_num} has been reopened.", ephemeral=True)
-
 
 # Run the bot
 bot.run("MTQyOTUxMDg0ODQwNTMwNzYwNA.Gx4DoP.Vwy2YsoASOANbMhr9T27wj8A-C0JiPwB6PCUlo")
