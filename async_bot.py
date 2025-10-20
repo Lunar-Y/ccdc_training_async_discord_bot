@@ -564,4 +564,4 @@ async def reopen_team(interaction: discord.Interaction, team_num: int):
 
 
 # Run the bot
-bot.run("MTQyOTUxMDg0ODQwNTMwNzYwNA.Gx4DoP.Vwy2YsoASOANbMhr9T27wj8A-C0JiPwB6PCUlo")
+bot.run("TOKEN HERE")
